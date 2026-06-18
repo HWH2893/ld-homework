@@ -109,15 +109,39 @@ jobs:
               echo "✅ Docker 已安装: $(docker --version)"
             else
               echo "⚠️  Docker 未安装，正在安装..."
-              curl -fsSL https://get.docker.com | bash
+
+              echo "  → 尝试方法 1: apt-get 安装 docker.io"
+              apt-get update -y > /dev/null 2>&1 && apt-get install -y docker.io > /dev/null 2>&1 && systemctl start docker > /dev/null 2>&1 && echo "  ✅ 方法 1 成功" && INSTALLED=1 || echo "  ❌ 方法 1 失败"
+
+              if [ -z "$INSTALLED" ]; then
+                echo "  → 尝试方法 2: DaoCloud 国内镜像脚本"
+                curl -sSL https://get.daocloud.io/docker | bash > /dev/null 2>&1 && systemctl start docker > /dev/null 2>&1 && echo "  ✅ 方法 2 成功" && INSTALLED=2 || echo "  ❌ 方法 2 失败"
+              fi
+
+              if [ -z "$INSTALLED" ]; then
+                echo "  → 尝试方法 3: 标准 Docker 官方脚本"
+                curl -fsSL https://get.docker.com | bash > /dev/null 2>&1 && echo "  ✅ 方法 3 成功" && INSTALLED=3 || echo "  ❌ 方法 3 失败"
+              fi
+
+              if [ -z "$INSTALLED" ]; then
+                echo "❌ Docker 安装失败，请手动登录服务器安装"
+                exit 1
+              fi
+
               echo "✅ Docker 安装完成: $(docker --version)"
             fi
 
             if docker compose version > /dev/null 2>&1; then
               echo "✅ Docker Compose: $(docker compose version)"
             else
-              echo "❌ 缺少 docker compose"
-              exit 1
+              echo "❌ 缺少 docker compose，尝试安装..."
+              apt-get install -y docker-compose > /dev/null 2>&1 || true
+              if docker-compose version > /dev/null 2>&1; then
+                echo "✅ docker-compose (v1) 已安装"
+              else
+                echo "❌ compose 仍不可用"
+                exit 1
+              fi
             fi
             echo ""
 
@@ -133,11 +157,11 @@ jobs:
             echo ""
 
             echo "=== [3/5] 停止旧容器 ==="
-            docker compose down --remove-orphans || true
+            docker compose down --remove-orphans || docker-compose down --remove-orphans || true
             echo ""
 
             echo "=== [4/5] 启动新容器 ==="
-            docker compose up -d
+            docker compose up -d || docker-compose up -d
             echo ""
 
             echo "=== [5/5] 健康检查 ==="
@@ -147,12 +171,12 @@ jobs:
               echo "✅ 部署成功！HTTP: $HTTP_CODE"
             else
               echo "⚠️  返回 $HTTP_CODE，查看日志："
-              docker compose logs --tail=20
+              docker compose logs --tail=20 || docker-compose logs --tail=20
             fi
 
             echo ""
             echo "=== 运行状态 ==="
-            docker compose ps
+            docker compose ps || docker-compose ps
 
   # ============================================
   # Job 4: 通知
