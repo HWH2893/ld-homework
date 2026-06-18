@@ -104,51 +104,41 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           use_insecure_cipher: true
           script: |
-            echo "=== 系统信息 ==="
-            uname -a
-            echo ""
-            echo "=== 当前用户 ==="
-            whoami
-            id
-            echo ""
-            echo "=== PATH ==="
-            echo $PATH
-            echo ""
-            echo "=== 搜索 docker ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S find / -name "docker" -type f 2>/dev/null | head -10
-            echo ""
-            echo "=== /usr/local/bin 目录 ==="
-            ls -la /usr/local/bin/ 2>&1 | head -20
-            echo ""
-            echo "=== 测试 sudo docker ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker --version 2>&1
-            echo ""
-            echo "=== 测试 sudo docker compose ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker compose version 2>&1
-            echo ""
-            echo "=== 测试 sudo docker ps ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker ps 2>&1
-            echo ""
-            echo "=== /opt/simple-web 目录 ==="
-            ls -la /opt/simple-web/ 2>&1
-            echo ""
-            echo "=== 诊断结束 ==="
+            echo "=== 环境检查 ==="
+            if command -v docker > /dev/null 2>&1; then
+              echo "✅ Docker 已安装: $(docker --version)"
+            else
+              echo "⚠️  Docker 未安装，正在安装..."
+              curl -fsSL https://get.docker.com | bash
+              echo "✅ Docker 安装完成: $(docker --version)"
+            fi
 
-            # ------ 真正的部署开始 ------
+            if docker compose version > /dev/null 2>&1; then
+              echo "✅ Docker Compose: $(docker compose version)"
+            else
+              echo "❌ 缺少 docker compose"
+              exit 1
+            fi
+            echo ""
+
             echo "=== [1/5] 加载 Docker 镜像 ==="
             cd /opt/simple-web
             gunzip -f simple-web.tar.gz
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker load -i simple-web.tar
+            docker load -i simple-web.tar
             rm -f simple-web.tar
+            echo ""
 
             echo "=== [2/5] 复制 compose 文件 ==="
             cp docker-compose.prod.yml docker-compose.yml
+            echo ""
 
             echo "=== [3/5] 停止旧容器 ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker compose down --remove-orphans || true
+            docker compose down --remove-orphans || true
+            echo ""
 
             echo "=== [4/5] 启动新容器 ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker compose up -d
+            docker compose up -d
+            echo ""
 
             echo "=== [5/5] 健康检查 ==="
             sleep 3
@@ -157,12 +147,12 @@ jobs:
               echo "✅ 部署成功！HTTP: $HTTP_CODE"
             else
               echo "⚠️  返回 $HTTP_CODE，查看日志："
-              echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker compose logs --tail=20
+              docker compose logs --tail=20
             fi
 
             echo ""
             echo "=== 运行状态 ==="
-            echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S docker compose ps
+            docker compose ps
 
   # ============================================
   # Job 4: 通知
