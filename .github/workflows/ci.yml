@@ -104,22 +104,35 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           use_insecure_cipher: true
           script: |
-            set -e
+            # 确定 docker 命令（处理 sudo 和 docker-compose 兼容性）
+            DOCKER="docker"
+            if ! docker ps > /dev/null 2>&1; then
+              if sudo docker ps > /dev/null 2>&1; then
+                DOCKER="sudo docker"
+              fi
+            fi
+            COMPOSE="$DOCKER compose"
+            if ! $COMPOSE version > /dev/null 2>&1; then
+              COMPOSE="docker-compose"
+            fi
+            echo "使用: $DOCKER / $COMPOSE"
+
+            mkdir -p /opt/simple-web
             cd /opt/simple-web
 
             echo "=== [1/5] 加载 Docker 镜像 ==="
             gunzip -f simple-web.tar.gz
-            docker load -i simple-web.tar
+            $DOCKER load -i simple-web.tar
             rm -f simple-web.tar
 
             echo "=== [2/5] 复制 compose 文件 ==="
             cp docker-compose.prod.yml docker-compose.yml
 
             echo "=== [3/5] 停止旧容器 ==="
-            docker compose down --remove-orphans || true
+            $COMPOSE down --remove-orphans || true
 
             echo "=== [4/5] 启动新容器 ==="
-            docker compose up -d
+            $COMPOSE up -d
 
             echo "=== [5/5] 健康检查 ==="
             sleep 3
@@ -128,12 +141,12 @@ jobs:
               echo "✅ 部署成功！HTTP: $HTTP_CODE"
             else
               echo "⚠️  返回 $HTTP_CODE，查看日志："
-              docker compose logs --tail=20
+              $COMPOSE logs --tail=20
             fi
 
             echo ""
             echo "=== 运行状态 ==="
-            docker compose ps
+            $COMPOSE ps
 
   # ============================================
   # Job 4: 通知
