@@ -85,12 +85,27 @@ jobs:
           name: docker-image
           path: ./
 
+      - name: 写入 SSH 私钥到工作区（容器内可访问）
+        run: |
+          mkdir -p .ssh
+          cat > .ssh/deploy_key << 'EOF'
+          ${{ secrets.SSH_PRIVATE_KEY }}
+          EOF
+          chmod 600 .ssh/deploy_key
+          KEY_SIZE=$(wc -c < .ssh/deploy_key)
+          echo "密钥大小: $KEY_SIZE bytes"
+          if [ "$KEY_SIZE" -lt 100 ]; then
+            echo "❌ SSH_PRIVATE_KEY 为空或过短，请检查 GitHub Secrets 配置"
+            exit 1
+          fi
+          ssh-keygen -y -f .ssh/deploy_key > /dev/null 2>&1 && echo "✅ 密钥格式有效" || echo "⚠️  密钥格式异常"
+
       - name: 传输 compose + 镜像到服务器
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key_path: .ssh/deploy_key
           use_insecure_cipher: true
           source: "docker-compose.prod.yml,simple-web.tar.gz"
           target: "/opt/simple-web/"
@@ -101,7 +116,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key_path: .ssh/deploy_key
           use_insecure_cipher: true
           script: |
             set -e
