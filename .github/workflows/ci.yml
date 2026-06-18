@@ -104,77 +104,80 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           use_insecure_cipher: true
           script: |
-            # 非交互式 shell PATH 不完整，显式补齐
-            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-            echo "PATH=$PATH"
+            # SSH 非交互式 shell 需要显式 PATH
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH"
 
-            # 查找 docker 可执行文件
-            DOCKER_BIN=""
-            for p in /usr/local/bin/docker /usr/bin/docker /snap/bin/docker; do
-              if [ -x "$p" ]; then
-                DOCKER_BIN="$p"
-                break
-              fi
-            done
+            SUDO_PASS="${{ secrets.SERVER_PASSWORD }}"
+
+            # 用 sudo 搜索 docker 实际路径（覆盖所有可能位置）
+            DOCKER_BIN=$(echo "$SUDO_PASS" | sudo -S find / -name docker -type f 2>/dev/null | grep -E "(bin|sbin)/docker$" | head -1)
             if [ -z "$DOCKER_BIN" ]; then
-              if command -v docker > /dev/null 2>&1; then
-                DOCKER_BIN="$(command -v docker)"
-              fi
-            fi
-            echo "docker 路径: $DOCKER_BIN"
-
-            # 确定是否需要 sudo
-            DOCKER="$DOCKER_BIN"
-            if [ -n "$DOCKER_BIN" ]; then
-              if ! $DOCKER ps > /dev/null 2>&1; then
-                echo "尝试 sudo docker..."
-                DOCKER="sudo -n $DOCKER_BIN"
-                if ! $DOCKER ps > /dev/null 2>&1; then
-                  echo "docker 无权限执行，尝试用 sudo -S"
-                  echo "${{ secrets.SERVER_PASSWORD }}" | sudo -S $DOCKER_BIN ps > /dev/null 2>&1 && DOCKER="echo '${{ secrets.SERVER_PASSWORD }}' | sudo -S $DOCKER_BIN"
-                fi
-              fi
-            else
-              echo "❌ 服务器上未找到 docker 可执行文件"
-              exit 1
-            fi
-
-            # 确定 compose 命令
-            COMPOSE="$DOCKER compose"
-            if ! echo "" | $COMPOSE version > /dev/null 2>&1; then
-              COMPOSE_BIN=""
-              for p in /usr/local/bin/docker-compose /usr/bin/docker-compose; do
-                if [ -x "$p" ]; then
-                  COMPOSE_BIN="$p"
+              # 回退尝试常见路径
+              for p in /usr/local/bin/docker /usr/bin/docker /usr/sbin/docker /snap/bin/docker; do
+                if echo "$SUDO_PASS" | sudo -S test -x "$p" 2>/dev/null; then
+                  DOCKER_BIN="$p"
                   break
                 fi
               done
-              if [ -n "$COMPOSE_BIN" ]; then
-                COMPOSE="$COMPOSE_BIN"
-                echo "使用旧版 docker-compose"
+            fi
+            echo "docker 路径: $DOCKER_BIN"
+            if [ -z "$DOCKER_BIN" ]; then
+              echo "❌ 服务器上未找到 docker 可执行文件"
+              echo "尝试列出 /usr/local/bin/:"
+              ls -la /usr/local/bin/ 2>&1 || true
+              echo "尝试列出 /usr/bin/:"
+              ls -la /usr/bin/ 2>&1 || true
+              exit 1
+            fi
+
+            # 测试 sudo docker 是否可用
+            DOCKER_CMD="echo \"$SUDO_PASS\" | sudo -S $DOCKER_BIN"
+            if eval "$DOCKER_CMD ps" > /dev/null 2>&1; then
+              echo "✅ sudo docker 正常"
+            else
+              echo "⚠️  sudo docker 失败，尝试普通 docker"
+              if $DOCKER_BIN ps > /dev/null 2>&1; then
+                DOCKER_CMD="$DOCKER_BIN"
+                echo "✅ 普通 docker 正常"
               else
-                echo "❌ 服务器上找不到 docker compose 命令"
+                echo "❌ docker 完全不可用"
+                eval "$DOCKER_CMD ps" 2>&1
                 exit 1
               fi
             fi
-            echo "最终使用: $DOCKER / $COMPOSE"
+
+            # 测试 docker compose / docker-compose
+            COMPOSE_CMD="$DOCKER_CMD compose"
+            if ! eval "$COMPOSE_CMD version" > /dev/null 2>&1; then
+              COMPOSE_BIN=$(echo "$SUDO_PASS" | sudo -S find / -name "docker-compose*" -type f 2>/dev/null | head -1)
+              if [ -n "$COMPOSE_BIN" ]; then
+                COMPOSE_CMD="echo \"$SUDO_PASS\" | sudo -S $COMPOSE_BIN"
+                echo "使用旧版 docker-compose: $COMPOSE_BIN"
+              else
+                echo "❌ 找不到 docker compose / docker-compose"
+                eval "$COMPOSE_CMD version" 2>&1
+                exit 1
+              fi
+            fi
+            echo "最终使用: DOCKER=$DOCKER_CMD"
+            echo "          COMPOSE=$COMPOSE_CMD"
 
             mkdir -p /opt/simple-web
             cd /opt/simple-web
 
             echo "=== [1/5] 加载 Docker 镜像 ==="
             gunzip -f simple-web.tar.gz
-            $DOCKER load -i simple-web.tar
+            eval "$DOCKER_CMD load -i simple-web.tar"
             rm -f simple-web.tar
 
             echo "=== [2/5] 复制 compose 文件 ==="
             cp docker-compose.prod.yml docker-compose.yml
 
             echo "=== [3/5] 停止旧容器 ==="
-            eval "$COMPOSE down --remove-orphans" || true
+            eval "$COMPOSE_CMD down --remove-orphans" || true
 
             echo "=== [4/5] 启动新容器 ==="
-            eval "$COMPOSE up -d"
+            eval "$COMPOSE_CMD up -d"
 
             echo "=== [5/5] 健康检查 ==="
             sleep 3
@@ -183,12 +186,12 @@ jobs:
               echo "✅ 部署成功！HTTP: $HTTP_CODE"
             else
               echo "⚠️  返回 $HTTP_CODE，查看日志："
-              eval "$COMPOSE logs --tail=20"
+              eval "$COMPOSE_CMD logs --tail=20"
             fi
 
             echo ""
             echo "=== 运行状态 ==="
-            eval "$COMPOSE ps"
+            eval "$COMPOSE_CMD ps"
 
           
 
