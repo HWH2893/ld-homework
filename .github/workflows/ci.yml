@@ -85,20 +85,12 @@ jobs:
           name: docker-image
           path: ./
 
-      - name: 写入 SSH 私钥（避免 GitHub Secret 换行符丢失问题）
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          echo "SSH key size: $(wc -c < ~/.ssh/deploy_key) bytes"
-          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null && echo "✅ SSH key 格式有效" || echo "⚠️  SSH key 格式异常"
-
       - name: 传输 compose + 镜像到服务器
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: ~/.ssh/deploy_key
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           use_insecure_cipher: true
           source: "docker-compose.prod.yml,simple-web.tar.gz"
           target: "/opt/simple-web/"
@@ -109,7 +101,7 @@ jobs:
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          key_path: ~/.ssh/deploy_key
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           use_insecure_cipher: true
           script: |
             set -e
